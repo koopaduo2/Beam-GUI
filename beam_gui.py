@@ -3,7 +3,7 @@
 #Custom Raspberry Pi laser image acquisition and beam profiling GUI
 #The code has been developed and tested on Raspberry Pi 4B & Raspbian + arducam & raspi HQ cameras
 
-#Version: v1.0
+#Version: v1.1
 #This software is made available via MIT license
 #GitHub project link: 
 
@@ -52,7 +52,7 @@ class Ui_MainWindow(object):
         self.label.setObjectName("label")
         #first pushbutton is connected to Run, which starts the image acquisition
         self.pushButton = QtWidgets.QPushButton(MainWindow)
-        self.pushButton.setGeometry(QtCore.QRect(703, 45, 75, 23))
+        self.pushButton.setGeometry(QtCore.QRect(703, 45, 55, 23))
         self.pushButton.setObjectName("pushButton")
         self.textEdit_2 = QtWidgets.QTextEdit(self.tab)
         self.textEdit_2.setGeometry(QtCore.QRect(52, 660, 801, 100))
@@ -122,7 +122,10 @@ class Ui_MainWindow(object):
         
         #widgets for saving data
         self.pushButton_S = QtWidgets.QPushButton(MainWindow)
-        self.pushButton_S.setGeometry(QtCore.QRect(780, 45, 75, 23))
+        self.pushButton_S.setGeometry(QtCore.QRect(760, 45, 55, 23))
+        #widgets for logging data continuously
+        self.pushButton_L = QtWidgets.QPushButton(MainWindow)
+        self.pushButton_L.setGeometry(QtCore.QRect(817, 45, 55, 23))
 
         #create an image frame for raw image (downsampled)
         #the image frame hosts the "Camera" tab image
@@ -145,6 +148,7 @@ class Ui_MainWindow(object):
         self.pushButton.clicked.connect(self.run)
         self.pushButton_P.clicked.connect(self.cal)
         self.pushButton_S.clicked.connect(self.save)
+        self.pushButton_L.clicked.connect(self.log)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
     #set text for GUI elements
@@ -163,6 +167,7 @@ class Ui_MainWindow(object):
         self.label_apy.setText(_translate("MainWindow", "Aperture y"))
         self.label_apr.setText(_translate("MainWindow", "Ap. Radius"))
         self.pushButton_S.setText(_translate("MainWindow", "Save"))
+        self.pushButton_L.setText(_translate("MainWindow", "Log"))
 
     #run image acquisition and processing thread
     RUNNING = False
@@ -182,6 +187,20 @@ class Ui_MainWindow(object):
                 self.threadA.cal()
             else:
                 self.lineEdit.setText("Input reading from real power meter to calibrate")
+                
+    def log(self):
+        if self.RUNNING:
+            if not self.threadA.LOGGING:
+                self.threadA.SAVE_NOW = True
+                self.threadA.LOGGING = True
+                self.pushButton_L.setText("Stop")
+            else:
+                self.threadA.SAVE_NOW = False
+                self.threadA.LOGGING = False
+                self.pushButton_L.setText("Log")
+                self.lineEdit.setText("Data logging stopped")
+        else:
+            self.lineEdit.setText("Run the system before logging data")
             
     #save images as png (can support other filetypes if needed)
     #save statistics as csv
@@ -199,7 +218,8 @@ class captureThread(QThread):
     camera = None #camera variable for PiCamera
     rawCapture = None #rawCapture variable for PiCamera
     MainWindow = None #MainWindow passed to thread so thread can modify UI elements
-    SAVE_NOW = False #flag to save all data
+    SAVE_NOW = False #flag to save all data once
+    LOGGING = False #flag to continuously log data
     FRAMES_INIT = False #used to set camera and beam frame sizes and locations to draw images on
     pix_sum, factor_P, pix_max = 0,0,0 #used for power meter calibration and estimation
     count_x,count_y,count_r = 0,0,0 #used to reset aperture values if input is left blank
@@ -437,8 +457,13 @@ class captureThread(QThread):
             plt.ylabel('Intensity')
             plt.savefig(os.path.join(savepath,filename5))
             plt.close('all')
-            self.MainWindow.lineEdit.setText("Data saved to: "+savepath)
-            self.SAVE_NOW = False
+            #only stop the saving if LOGGING is not enabled
+            #update info bar depending on whether logging or single save
+            if not self.LOGGING:
+                self.MainWindow.lineEdit.setText("Data saved to: "+savepath)
+                self.SAVE_NOW = False
+            else:
+                self.MainWindow.lineEdit.setText("Data logging to: "+savepath)
             
         #convert to int by rounding
         d4x, d4y, centroid_x, centroid_y = round(d4x), round(d4y), round(centroid_x), round(centroid_y)
