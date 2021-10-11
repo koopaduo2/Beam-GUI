@@ -11,6 +11,7 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QThread
 import numpy as np
+import matplotlib.pyplot as plt
 import cv2
 import os
 import datetime
@@ -18,6 +19,10 @@ from picamera.array import PiRGBArray
 from picamera import PiCamera
 import time
 import math
+
+#ignore command line warnings
+import warnings
+warnings.filterwarnings("ignore")
 
 #main GUI window definitions
 class Ui_MainWindow(object):
@@ -198,9 +203,11 @@ class captureThread(QThread):
     FRAMES_INIT = False #used to set camera and beam frame sizes and locations to draw images on
     pix_sum, factor_P, pix_max = 0,0,0 #used for power meter calibration and estimation
     count_x,count_y,count_r = 0,0,0 #used to reset aperture values if input is left blank
+    mask_x, mask_y, mask_r = 1296,972,880 #mask values for digital aperture. Changes based on text input
     W = 0 #camera/image width to be set
     H = 0 #camera/image height to be set
     pixel_um = 1.55 #multiply a pixel width by 1.55 micron to get physical width #SENSOR DEPENDENT
+
     
     #initialize camera and set main window for interaction between thread and MainWindow
     def __init__(self, MainWindow, W, H):
@@ -304,7 +311,7 @@ class captureThread(QThread):
     def cal(self):
         #define saturation as having a fully bright pixel
         if 0 < self.pix_max < 255:
-            measured_P = int(self.MainWindow.lineEdit_P.text())
+            measured_P = float(self.MainWindow.lineEdit_P.text())
             self.factor_P = measured_P / self.pix_sum
             self.MainWindow.lineEdit.setText("Power meter calibrated!")
         elif self.pix_max == 0:
@@ -321,33 +328,33 @@ class captureThread(QThread):
         #set the aperture mask values to those input by the user in the text boxes
         #if the text boxes are left blank for some time, they will default
         try:        
-            mask_x = int(self.MainWindow.lineEdit_apx.text())
+            self.mask_x = int(self.MainWindow.lineEdit_apx.text())
             self.count_x = 0
         except:
-            mask_x = int(self.W / 2)
             if self.count_x == 3:
-                self.MainWindow.lineEdit_apx.setText(str(mask_x))
+                self.mask_x = int(self.W / 2)
+                self.MainWindow.lineEdit_apx.setText(str(self.mask_x))
             self.count_x += 1
         try:
-            mask_y = int(self.MainWindow.lineEdit_apy.text())
+            self.mask_y = int(self.MainWindow.lineEdit_apy.text())
             self.count_y = 0
         except:
-            mask_y = int(self.H / 2)
             if self.count_y == 3:
-                self.MainWindow.lineEdit_apy.setText(str(mask_y))
+                self.mask_y = int(self.H / 2)
+                self.MainWindow.lineEdit_apy.setText(str(self.mask_y))
             self.count_y += 1
         try:
-            mask_r = int(self.MainWindow.lineEdit_apr.text())
+            self.mask_r = int(self.MainWindow.lineEdit_apr.text())
             self.count_r = 0
         except:
-            mask_r = int(mask_y - 100)
             if self.count_r == 3:
-                self.MainWindow.lineEdit_apr.setText(str(mask_r))
+                self.mask_r = int(self.H/2 - 100)
+                self.MainWindow.lineEdit_apr.setText(str(self.mask_r))
             self.count_r += 1
             
         #define a mask depending on aperture
         mask = np.zeros([self.H,self.W])
-        mask = cv2.circle(mask, (mask_x,mask_y), mask_r, 255, -1)
+        mask = cv2.circle(mask, (self.mask_x,self.mask_y), self.mask_r, 255, -1)
         
         #take grayscale version of the image for intensity profiling
         image = cv2.cvtColor(self.image_live, cv2.COLOR_BGR2GRAY)
@@ -365,15 +372,15 @@ class captureThread(QThread):
         #compute the centroid and D4σ in pixel values if image is not empty
         MOM = cv2.moments(image_m)
         if MOM['m00'] != 0:
-            centroid_x = int(MOM['m10']/MOM['m00'])
-            centroid_y = int(MOM['m01']/MOM['m00'])
+            centroid_x = round(MOM['m10']/MOM['m00'])
+            centroid_y = round(MOM['m01']/MOM['m00'])
             #note 1 pixel has physical dimension: pixel_um * pixel_um (= 1.55 um (micron) * 1.55 um for Raspi HQ Camera module)
             #With no scaling (lens) the physical beam widths are then d4x (px) * 1.55 um, d4y (px) * 1.55 um
-            d4x = int(self.pixel_um*4*math.sqrt(MOM['m20']/MOM['m00'] - centroid_x**2))
-            d4y = int(self.pixel_um*4*math.sqrt(MOM['m02']/MOM['m00'] - centroid_y**2))
+            d4x = round(self.pixel_um*4*math.sqrt(abs(MOM['m20']/MOM['m00'] - centroid_x**2)))
+            d4y = round(self.pixel_um*4*math.sqrt(abs(MOM['m02']/MOM['m00'] - centroid_y**2)))
         else:
-            centroid_x = mask_x
-            centroid_y = mask_y
+            centroid_x = self.mask_x
+            centroid_y = self.mask_y
             d4x = 0
             d4y = 0
 
@@ -382,19 +389,20 @@ class captureThread(QThread):
         self.MainWindow.lcdNumber_dy.display(d4y)
         
         #take the negative of the image in grayscale space to apply cv2 rainbow map
-        image = 255 - image
-        beam = cv2.applyColorMap(image, cv2.COLORMAP_RAINBOW)
+        image_n = 255 - image
+        beam = cv2.applyColorMap(image_n, cv2.COLORMAP_RAINBOW)
         
-        #save all data if SAVE is flagged by save button, then reset the flag
+        #save all data if SAVE_NOW is flagged by save button, then reset the flag
         if self.SAVE_NOW:
             savepath = os.path.join(os.getcwd(), "saves")
             if not os.path.exists(savepath):
                 os.mkdir(savepath)
-            self.MainWindow.lineEdit.setText("Data saved to: "+savepath)
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             filename1 = "camera_"+timestamp+".png"
             filename2 = "beam_"+timestamp+".png"
-            filename3 = "stats"+timestamp+".csv"
+            filename3 = "stats_"+timestamp+".csv"
+            filename4 = "x_profile_"+timestamp+".png"
+            filename5 = "y_profile_"+timestamp+".png"
             cv2.imwrite(os.path.join(savepath,filename1), self.image_live) #may need to cvt color
             cv2.imwrite(os.path.join(savepath,filename2), beam)
             statsfile = open(os.path.join(savepath,filename3), 'w')
@@ -405,12 +413,31 @@ class captureThread(QThread):
             statsfile.write("D4σ x, y\n")
             statsfile.write(str(d4x)+","+str(d4y)+"\n")
             statsfile.write("Aperture x (px), y (px), radius (px)\n")
-            statsfile.write(str(mask_x)+","+str(mask_y)+","+str(mask_r)+"\n")
+            statsfile.write(str(self.mask_x)+","+str(self.mask_y)+","+str(self.mask_r)+"\n")
             statsfile.write("Estimated power (mW)\n")
             statsfile.write(str(P_estimated)+"\n")
             statsfile.write("Gray value max (ct), sum (ct)\n")
             statsfile.write(str(self.pix_max)+","+str(self.pix_sum)+"\n")
             statsfile.close()
+            x_prof = image[centroid_y,:]
+            plt.plot(range(len(x_prof)),x_prof)
+            plt.title('Beam profile along x-axis at y-centroid')
+            plt.xlim(0,len(x_prof)-1)
+            plt.ylim(0,255)
+            plt.xlabel('Pixel')
+            plt.ylabel('Intensity')
+            plt.savefig(os.path.join(savepath,filename4))
+            plt.close('all')
+            y_prof = image[:,centroid_x]
+            plt.plot(range(len(y_prof)),y_prof)
+            plt.title('Beam profile along y-axis at x-centroid')
+            plt.xlim(0,len(y_prof)-1)
+            plt.ylim(0,255)
+            plt.xlabel('Pixel')
+            plt.ylabel('Intensity')
+            plt.savefig(os.path.join(savepath,filename5))
+            plt.close('all')
+            self.MainWindow.lineEdit.setText("Data saved to: "+savepath)
             self.SAVE_NOW = False
             
         #apply centroid line tracking
@@ -422,8 +449,8 @@ class captureThread(QThread):
         beam_R = cv2.cvtColor(beam_R, cv2.COLOR_BGR2RGB)
         #line below is to add aperture mask circle
         #image is reduced by 4 times, so center coordinate is mask_x/4, mask_y/4; radius is mask_r/4
-        beam_R = cv2.circle(beam_R, (int(mask_x/4),int(mask_y/4)),\
-            int(mask_r/4), (0,0,0), 2)
+        beam_R = cv2.circle(beam_R, (round(self.mask_x/4),round(self.mask_y/4)),\
+            int(self.mask_r/4), (0,0,0), 2)
         #set the image to the proper position on the window if not already done
         if not self.FRAMES_INIT:
             self.MainWindow.beam_frame.move(125,60)
