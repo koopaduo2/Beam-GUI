@@ -366,27 +366,27 @@ class captureThread(QThread):
         #approximate the power based on the total bit count and calibration factors
         self.pix_sum = np.sum(image_m)
         self.pix_max = image_m.max()
-        P_estimated = round(self.pix_sum * self.factor_P)
-        self.MainWindow.lcdNumber_P.display(P_estimated)
+        P_estimated = self.pix_sum * self.factor_P
+        self.MainWindow.lcdNumber_P.display(round(P_estimated))
 
         #compute the centroid and D4σ in pixel values if image is not empty
         MOM = cv2.moments(image_m)
         if MOM['m00'] != 0:
-            centroid_x = round(MOM['m10']/MOM['m00'])
-            centroid_y = round(MOM['m01']/MOM['m00'])
+            centroid_x = MOM['m10']/MOM['m00']
+            centroid_y = MOM['m01']/MOM['m00']
             #note 1 pixel has physical dimension: pixel_um * pixel_um (= 1.55 um (micron) * 1.55 um for Raspi HQ Camera module)
             #With no scaling (lens) the physical beam widths are then d4x (px) * 1.55 um, d4y (px) * 1.55 um
-            d4x = round(self.pixel_um*4*math.sqrt(abs(MOM['m20']/MOM['m00'] - centroid_x**2)))
-            d4y = round(self.pixel_um*4*math.sqrt(abs(MOM['m02']/MOM['m00'] - centroid_y**2)))
+            d4x = self.pixel_um*4*math.sqrt(abs(MOM['m20']/MOM['m00'] - centroid_x**2))
+            d4y = self.pixel_um*4*math.sqrt(abs(MOM['m02']/MOM['m00'] - centroid_y**2))
         else:
             centroid_x = self.mask_x
             centroid_y = self.mask_y
             d4x = 0
             d4y = 0
 
-        self.MainWindow.label_centroid.setText("Centroid x,y: "+str(centroid_x)+", "+str(centroid_y))
-        self.MainWindow.lcdNumber_dx.display(d4x)
-        self.MainWindow.lcdNumber_dy.display(d4y)
+        self.MainWindow.label_centroid.setText("Centroid x,y: "+str(round(centroid_x))+", "+str(round(centroid_y)))
+        self.MainWindow.lcdNumber_dx.display(round(d4x))
+        self.MainWindow.lcdNumber_dy.display(round(d4y))
         
         #take the negative of the image in grayscale space to apply cv2 rainbow map
         image_n = 255 - image
@@ -419,7 +419,7 @@ class captureThread(QThread):
             statsfile.write("Gray value max (ct), sum (ct)\n")
             statsfile.write(str(self.pix_max)+","+str(self.pix_sum)+"\n")
             statsfile.close()
-            x_prof = image[centroid_y,:]
+            x_prof = image[round(centroid_y),:]
             plt.plot(range(len(x_prof)),x_prof)
             plt.title('Beam profile along x-axis at y-centroid')
             plt.xlim(0,len(x_prof)-1)
@@ -428,7 +428,7 @@ class captureThread(QThread):
             plt.ylabel('Intensity')
             plt.savefig(os.path.join(savepath,filename4))
             plt.close('all')
-            y_prof = image[:,centroid_x]
+            y_prof = image[:,round(centroid_x)]
             plt.plot(range(len(y_prof)),y_prof)
             plt.title('Beam profile along y-axis at x-centroid')
             plt.xlim(0,len(y_prof)-1)
@@ -440,6 +440,9 @@ class captureThread(QThread):
             self.MainWindow.lineEdit.setText("Data saved to: "+savepath)
             self.SAVE_NOW = False
             
+        #convert to int by rounding
+        d4x, d4y, centroid_x, centroid_y = round(d4x), round(d4y), round(centroid_x), round(centroid_y)
+        
         #apply centroid line tracking
         cv2.line(beam, (centroid_x,0), (centroid_x,self.H), (0,0,0), thickness=5)
         cv2.line(beam, (0,centroid_y), (self.W,centroid_y), (0,0,0), thickness=5)
