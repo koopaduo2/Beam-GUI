@@ -1,11 +1,12 @@
-#Steven Tran: stevennamtran@gmail.com
+#GitHub: koopaduo2
+#Reddit: koopaduo
 #Optical Engineer
 #Custom Raspberry Pi laser image acquisition and beam profiling GUI
 #The code has been developed and tested on Raspberry Pi 4B & Raspbian + arducam & raspi HQ cameras
 
 #Version: v1.1
 #This software is made available via MIT license
-#GitHub project link: 
+#GitHub project link: https://github.com/koopaduo2/Beam-GUI
 
 #required imports
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -84,6 +85,12 @@ class Ui_MainWindow(object):
         self.lineEdit_P.setText("0")
         self.pushButton_P = QtWidgets.QPushButton(self.tab_2)
         self.pushButton_P.setGeometry(QtCore.QRect(20, 50, 80, 40))
+        #label for showing number of saturated pixels
+        self.label_sat = QtWidgets.QLabel(self.tab_2)
+        self.label_sat.setFont(QtGui.QFont('Any',12))
+        self.label_sat.setText("# Saturated Pixels: 0")
+        self.label_sat.setGeometry(QtCore.QRect(210,540,250,30))
+        
         
         #widgets for displaying centroid and estimated beam width
         #labels say d4 sigma. lcd's show computed widths
@@ -122,10 +129,10 @@ class Ui_MainWindow(object):
         
         #widgets for saving data
         self.pushButton_S = QtWidgets.QPushButton(MainWindow)
-        self.pushButton_S.setGeometry(QtCore.QRect(760, 45, 55, 23))
+        self.pushButton_S.setGeometry(QtCore.QRect(765, 45, 55, 23))
         #widgets for logging data continuously
         self.pushButton_L = QtWidgets.QPushButton(MainWindow)
-        self.pushButton_L.setGeometry(QtCore.QRect(817, 45, 55, 23))
+        self.pushButton_L.setGeometry(QtCore.QRect(827, 45, 55, 23))
 
         #create an image frame for raw image (downsampled)
         #the image frame hosts the "Camera" tab image
@@ -221,7 +228,8 @@ class captureThread(QThread):
     SAVE_NOW = False #flag to save all data once
     LOGGING = False #flag to continuously log data
     FRAMES_INIT = False #used to set camera and beam frame sizes and locations to draw images on
-    pix_sum, factor_P, pix_max = 0,0,0 #used for power meter calibration and estimation
+    pix_sum, factor_P, pix_max, sat_num = 0,0,0,0 #used for power meter calibration, estimation and detecting saturation
+    sat_num_allowed = 20 #number of allowed saturated pixels before considering the beam profile 'saturated'
     count_x,count_y,count_r = 0,0,0 #used to reset aperture values if input is left blank
     mask_x, mask_y, mask_r = 1296,972,880 #mask values for digital aperture. Changes based on text input
     W = 0 #camera/image width to be set
@@ -329,15 +337,15 @@ class captureThread(QThread):
     #calibrate the estimated power meter using a real power meter and pixel sum
 
     def cal(self):
-        #define saturation as having a fully bright pixel
-        if 0 < self.pix_max < 255:
+        #define saturation as having a certain number of fully bright pixels self.sat_num_allowed
+        if self.sat_num > self.sat_num_allowed:
+            self.MainWindow.lineEdit.setText("Calibration failed! Image is saturated")
+        elif 0 < self.pix_max:
             measured_P = float(self.MainWindow.lineEdit_P.text())
             self.factor_P = measured_P / self.pix_sum
             self.MainWindow.lineEdit.setText("Power meter calibrated!")
-        elif self.pix_max == 0:
-            self.MainWindow.lineEdit.setText("Calibration failed! No beam detected")
         else:
-            self.MainWindow.lineEdit.setText("Calibration failed! Image is saturated")
+            self.MainWindow.lineEdit.setText("Calibration failed! No beam detected")
     
     #convert camera image to beam profile (rainbow map) and display on GUI
     #compute metrics of beam (centroid, D4σ)
@@ -388,7 +396,11 @@ class captureThread(QThread):
         self.pix_max = image_m.max()
         P_estimated = self.pix_sum * self.factor_P
         self.MainWindow.lcdNumber_P.display(round(P_estimated))
-
+        
+        #count the number of saturated pixels
+        self.sat_num = len(np.where(image_m==255)[0])
+        self.MainWindow.label_sat.setText("# Saturated Pixels: "+str(self.sat_num))
+        
         #compute the centroid and D4σ in pixel values if image is not empty
         MOM = cv2.moments(image_m)
         if MOM['m00'] != 0:
@@ -436,8 +448,8 @@ class captureThread(QThread):
             statsfile.write(str(self.mask_x)+","+str(self.mask_y)+","+str(self.mask_r)+"\n")
             statsfile.write("Estimated power (mW)\n")
             statsfile.write(str(P_estimated)+"\n")
-            statsfile.write("Gray value max (ct), sum (ct)\n")
-            statsfile.write(str(self.pix_max)+","+str(self.pix_sum)+"\n")
+            statsfile.write("Gray value max (ct), sum (ct), saturated pixels (ct)\n")
+            statsfile.write(str(self.pix_max)+","+str(self.pix_sum)+","+str(self.sat_num)+"\n")
             statsfile.close()
             x_prof = image[round(centroid_y),:]
             plt.plot(range(len(x_prof)),x_prof)
@@ -476,9 +488,9 @@ class captureThread(QThread):
         beam_R = cv2.resize(beam, (int(self.W/scale),int(self.H/scale)))
         beam_R = cv2.cvtColor(beam_R, cv2.COLOR_BGR2RGB)
         #line below is to add aperture mask circle
-        #image is reduced by 4 times, so center coordinate is mask_x/4, mask_y/4; radius is mask_r/4
-        beam_R = cv2.circle(beam_R, (round(self.mask_x/4),round(self.mask_y/4)),\
-            int(self.mask_r/4), (0,0,0), 2)
+        #image is reduced by scale times, so center coordinate is mask_x/scale, mask_y/scale; radius is mask_r/scale
+        beam_R = cv2.circle(beam_R, (round(self.mask_x/scale),round(self.mask_y/scale)),\
+            int(self.mask_r/scale), (0,0,0), 2)
         #set the image to the proper position on the window if not already done
         if not self.FRAMES_INIT:
             self.MainWindow.beam_frame.move(125,60)
