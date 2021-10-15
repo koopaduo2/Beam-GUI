@@ -262,7 +262,8 @@ class captureThread(QThread):
         #configure settings for the camera
         #these settings were chosen to minimize exposure and gain for laser profiling
         #even at minimum settings, the camera will most likely need a variable ND filter
-        camera.awb_mode = 'flash' #AWB mode
+        camera.awb_mode = 'off' #AWB mode
+        camera.awb_gains = (3.1,3.1) #manual AWB gain settings
         camera.brightness = 50 #Image brightness
         camera.meter_mode = 'backlit' #Metering mode
         camera.exposure_mode = 'off' #Prevent auto exposure so results are consistent
